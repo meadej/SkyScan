@@ -60,6 +60,10 @@ capturePeriod = 1000  # milliseconds
 active = False
 Active = True
 
+camera_roll = os.getenv("CAMERA_ROLL", 0)
+camera_pitch = os.getenv("CAMERA_PITCH", 0)
+camera_yaw = os.getenv("CAMERA_YAW", 0)
+
 object_topic = None
 flight_topic = None
 config_topic = "skyscan/config/json"
@@ -511,6 +515,9 @@ def calculateCameraPositionA():
 
 
 def moveCamera(ip, username, password):
+    global camera_roll
+    global camera_pitch
+    global camera_yaw
 
     movePeriod = 100  # milliseconds
     moveTimeout = datetime.now()
@@ -530,9 +537,9 @@ def moveCamera(ip, username, password):
 
     # Compute the rotations from the XYZ coordinate system to the uvw
     # (camera housing fixed) coordinate system
-    alpha = 0.0  # [deg]
-    beta = 0.0  # [deg]
-    gamma = 0.0  # [deg]
+    alpha = camera_yaw  # [deg]
+    beta = camera_pitch  # [deg]
+    gamma = camera_roll  # [deg]
     q_alpha, q_beta, q_gamma, E_XYZ_to_uvw, _, _, _ = compute_rotations(
         e_E_XYZ, e_N_XYZ, e_z_XYZ, alpha, beta, gamma, 0.0, 0.0
     )
@@ -543,6 +550,8 @@ def moveCamera(ip, username, password):
                 logging.info(" 🚨 Active but Current Plane is not set")
                 continue
             if moveTimeout <= datetime.now():
+                calculateCameraPositionA()
+                logging.info("Camera Position, A - Pan {} Tilt {}".format(cameraPan, cameraTilt))
                 calculateCameraPositionB(
                     r_XYZ_t,
                     E_XYZ_to_ENz,
@@ -554,6 +563,7 @@ def moveCamera(ip, username, password):
                     gamma,
                     E_XYZ_to_uvw,
                 )
+                logging.info("Camera Position, B - Pan {} Tilt {}".format(cameraPan, cameraTilt))
                 camera.absolute_move(cameraPan, cameraTilt, cameraZoom, cameraMoveSpeed)
                 # logging.info("Moving to Pan: {} Tilt: {}".format(cameraPan, cameraTilt))
                 moveTimeout = moveTimeout + timedelta(milliseconds=movePeriod)

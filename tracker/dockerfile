@@ -1,13 +1,15 @@
-FROM python:3
+FROM iqtlabs/edgetech-core:latest
 
 RUN mkdir -p /app/mqtt_wrapper/
 WORKDIR /app
+
 # Moves the requirement file in and installs.
 # Building the Py Packages takes forever, so make edits after this
 # --------
 ADD *.txt /app/ 
 RUN pip3 install -r requirements.txt
 # --------
+
 ADD static /app/static/
 ADD templates /app/templates/
 ADD *.py /app/

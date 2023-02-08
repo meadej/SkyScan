@@ -21,6 +21,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+from sched import scheduler
 from typing import *
 import socket, select
 import argparse
@@ -45,6 +46,7 @@ import pandas as pd
 from queue import Queue
 from flask import Flask
 from flask import render_template
+from base_mqtt_pub_sub import BaseMQTTPubSub
 
 ID = str(random.randint(1,100001))
 
@@ -383,27 +385,24 @@ def on_message(client, userdata, message):
     else:
         logging.info("Topic not processed: " + message.topic)
    
-class FlightTracker(object):
-    __mqtt_broker: str = ""
-    __mqtt_port: int = 0
-    __plane_topic: str = None
-    __flight_topic: str = None
-    __client = None
-    __observations: Dict[str, str] = {}
-    __tracking_icao24: str = None
-    __tracking_distance: int = 999999999
-    __next_clean: datetime = None
+class FlightTracker(BaseMQTTPubSub):
+    _flight_topic: str = None
+    _client = None
+    _observations: Dict[str, str] = {}
+    _tracking_icao24: str = None
+    _tracking_distance: int = 999999999
+    _next_clean: datetime = None
     __has_nagged: bool = False
-    __dump1090_host: str = ""
-    __dump1090_port: int = 0
+    _dump1090_host: str = ""
+    _dump1090_port: int = 0
     __dump1090_sock: socket.socket = None
 
-    def __init__(self, dump1090_host: str, mqtt_broker: str, plane_topic: str, flight_topic: str, dump1090_port: int = 30003, mqtt_port: int = 1883, ):
+    def __init__(self, dump1090_host: str, flight_topic: str, mqtt_ip: str, dump1090_port: int = 30003, mqtt_port: int = 1883, **kwargs):
         """Initialize the flight tracker
 
         Arguments:
             dump1090_host {str} -- Name or IP of dump1090 host
-            mqtt_broker {str} -- Name or IP of dump1090 MQTT broker
+            mqtt_ip {str} -- Name or IP of dump1090 MQTT broker
             latitude {float} -- Latitude of receiver
             longitude {float} -- Longitude of receiver
             plane_topic {str} -- MQTT topic for plane reports
@@ -413,17 +412,19 @@ class FlightTracker(object):
             dump1090_port {int} -- Override the dump1090 raw port (default: {30003})
             mqtt_port {int} -- Override the MQTT default port (default: {1883})
         """
-        self.__dump1090_host = dump1090_host
-        self.__dump1090_port = dump1090_port
-        self.__mqtt_broker = mqtt_broker
-        self.__mqtt_port = mqtt_port
-        self.__sock = None
-        self.__observations = {}
-        self.__next_clean = datetime.utcnow() + timedelta(seconds=OBSERVATION_CLEAN_INTERVAL)
-        self.__plane_topic = plane_topic
-        self.__flight_topic = flight_topic
+        super().__init__(**kwargs)
+        self.mqtt_ip = mqtt_ip
+        self.mqtt_port = mqtt_port
 
-    def __getObservationJson(self, observation):
+        self.connect_client()
+
+        self._dump1090_host = dump1090_host
+        self._dump1090_port = dump1090_port
+        self._observations = {}
+        self._next_clean = datetime.utcnow() + timedelta(seconds=OBSERVATION_CLEAN_INTERVAL)
+        self._flight_topic = flight_topic
+
+    def _getObservationJson(self, observation):
         (lat, lon, alt) = utils.calc_travel_3d(observation.getLat(), observation.getLon(), observation.getAltitude(), observation.getLatLonTime(), observation.getAltitudeTime(), observation.getGroundSpeed(), observation.getTrack(), observation.getVerticalRate(), camera_lead)
         distance3d = utils.coordinate_distance_3d(camera_latitude, camera_longitude, camera_altitude, lat, lon, alt)
         #(latorig, lonorig) = utils.calc_travel(observation.getLat(), observation.getLon(), observation.getLatLonTime(),  observation.getGroundSpeed(), observation.getTrack(), camera_lead)
@@ -435,7 +436,7 @@ class FlightTracker(object):
         #elevationorig = utils.elevation(distance2d, observation.getAltitude(), camera_altitude) 
         return observation.json()
 
-    def __publish_thread(self):
+    def _publish_thread(self):
         """
         MQTT publish closest observation every second, more often if the plane is closer
         """
@@ -447,35 +448,35 @@ class FlightTracker(object):
             # Checks to see if it is time to publish a hearbeat message
             if timeHeartbeat < time.mktime(time.gmtime()):
                 timeHeartbeat = time.mktime(time.gmtime()) + 10
-                self.__client.publish("skyscan/heartbeat", "skyscan-tracker-" +ID+" Heartbeat", 0, False)
+                self._client.publish("skyscan/heartbeat", "skyscan-tracker-" +ID+" Heartbeat", 0, False)
 
             # if we are not tracking anything, goto sleep for 1 second
-            if not self.__tracking_icao24:
+            if not self._tracking_icao24:
                 retain = False
-                self.__client.publish(self.__flight_topic, notTrackingJson, 0, retain)
+                self._client.publish(self._flight_topic, notTrackingJson, 0, retain)
                 delay = 1
                 time.sleep(delay)
             else:
                 # Check to see if the currently tracked airplane is in the observations
-                if not self.__tracking_icao24 in self.__observations:
-                    self.__tracking_icao24 = None
+                if not self._tracking_icao24 in self._observations:
+                    self._tracking_icao24 = None
                     continue
-                cur = self.__observations[self.__tracking_icao24]
+                cur = self._observations[self._tracking_icao24]
                 if cur is None:
                     continue
                 retain = False
-                self.__client.publish(self.__flight_topic, cur.json(), 0, retain)
+                self._client.publish(self._flight_topic, cur.json(), 0, retain)
                 
 
-                if self.__tracking_distance < 3000:
+                if self._tracking_distance < 3000:
                     delay = 0.25
-                elif self.__tracking_distance < 6000:
+                elif self._tracking_distance < 6000:
                     delay = 0.5
                 else:
                     delay = 1
                 time.sleep(delay)
 
-    def __whyTrackable(self, observation) -> str:
+    def _whyTrackable(self, observation) -> str:
         """ Returns a string explaining why a Plane can or cannot be tracked """
 
         reason = ""
@@ -520,7 +521,7 @@ class FlightTracker(object):
 
         return reason
 
-    def __isTrackable(self, observation) -> bool:
+    def _isTrackable(self, observation) -> bool:
         """ Does this observation meet all of the requirements to be tracked """
 
         if observation.getAltitude() == None or observation.getGroundSpeed() == None or observation.getTrack() == None or observation.getLat() == None or observation.getLon() == None:
@@ -549,31 +550,31 @@ class FlightTracker(object):
 
         return True
 
-    def __updateTrackingDistance(self):
+    def _updateTrackingDistance(self):
         """Update distance to aircraft being tracked
         """
-        cur = self.__observations[self.__tracking_icao24]
+        cur = self._observations[self._tracking_icao24]
         if cur.getAltitude():
-            self.__tracking_distance = utils.coordinate_distance_3d(camera_latitude, camera_longitude, camera_altitude, cur.getLat(), cur.getLon(), cur.getAltitude())
+            self._tracking_distance = utils.coordinate_distance_3d(camera_latitude, camera_longitude, camera_altitude, cur.getLat(), cur.getLon(), cur.getAltitude())
 
-    def __observationKey(self,obs):
+    def _observationKey(self,obs):
 
         return int(obs["_Observation__distance"])
 
 
     def getObservations(self):
         items=[]
-        for icao24 in self.__observations:
-            if self.__observations[icao24].isPresentable():
-                items.append(self.__observations[icao24].dict())
-        items.sort(key=self.__observationKey)
+        for icao24 in self._observations:
+            if self._observations[icao24].isPresentable():
+                items.append(self._observations[icao24].dict())
+        items.sort(key=self._observationKey)
         return items
 
     def getTracking(self):
-        return self.__tracking_icao24
+        return self._tracking_icao24
 
     def getTrackingObservation(self):
-        return self.__getObservationJson(self.__observations[self.__tracking_icao24])
+        return self._getObservationJson(self._observations[self._tracking_icao24])
 
 
     def dump1090Connect(self) -> bool:
@@ -587,14 +588,14 @@ class FlightTracker(object):
                 if not self.__has_nagged:
                     logging.info("Connecting to dump1090")
                 self.__dump1090_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                self.__dump1090_sock.connect((self.__dump1090_host, self.__dump1090_port))
+                self.__dump1090_sock.connect((self._dump1090_host, self._dump1090_port))
                 logging.info("ADSB connected")
                 self.__dump1090_sock.settimeout(DUMP1090_SOCKET_TIMEOUT)
                 self.__has_nagged = False
                 return True
             except socket.error as e:
                 if not self.__has_nagged:
-                    logging.critical("Failed to connect to ADSB receiver on %s:%s, retrying : %s" % (self.__dump1090_host, self.__dump1090_port, e))
+                    logging.critical("Failed to connect to ADSB receiver on %s:%s, retrying : %s" % (self._dump1090_host, self._dump1090_port, e))
                     self.__has_nagged = True
                 self.__dump1090_sock = None
                 delay = 5
@@ -672,134 +673,135 @@ class FlightTracker(object):
         except socket.timeout:
             return None
 
-
-
-
     def run(self):
-        """Run the flight tracker.
+        """
+        Run the flight tracker.
         """
         global aircraft_pinned
-        print("connecting to MQTT broker at "+ self.__mqtt_broker +", subcribing on channel '"+ self.__plane_topic+"'publising on: " + self.__flight_topic)
-        self.__client = mqtt.Client("skyscan-tracker-" + ID) #create new instance
 
-        self.__client.on_message = on_message #attach function to callback
-        print("setup MQTT")
-        self.__client.connect(self.__mqtt_broker) #connect to broker
-        print("connected mqtt")
-        self.__client.loop_start() #start the loop
-        print("start MQTT")
-        self.__client.subscribe("skyscan/egi")
-        self.__client.subscribe(config_topic)
-        self.__client.publish("skyscan/registration", "skyscan-tracker-"+ID+" Registration", 0, False)
-        print("subscribe mqtt")
-        threading.Thread(target = self.__publish_thread, daemon = True).start()
+        self._client.on_message = on_message #attach function to callback
+        self._client.loop_start() #start the loop
+
+        self.add_subscribe_topic("skyscan/egi")
+        self.add_subscribe_topic(config_topic)
+        self.publish_registration("skyscan-tracker-" + ID + " Registration")
+
+        threading.Thread(target = self._publish_thread, daemon = True).start()
+
+        scheduler.every(10).seconds.do(
+            self.publish_heartbeat, payload="Flighttracker C2 Heartbeat"
+        )
 
         # This loop reads in new messages from dump1090 and determines which plane to track
         while True:
             if not self.dump1090Connect():
                 continue
+
             for data in self.dump1090Read():
                 if data is None:
                     continue
-                self.cleanObservations()
-                m = sbs1.parse(data)
-                if m:
-                    icao24 = m["icao24"].lower()
+
+                self._cleanObservations()
+
+                sbs_data = sbs1.parse(data)
+
+                if sbs_data:
+                    icao24 = sbs_data["icao24"].lower()
 
                     # Add or update the Observation for the plane
-                    if icao24 not in self.__observations:
-                        self.__observations[icao24] = Observation(m)
+                    if icao24 not in self._observations:
+                        self._observations[icao24] = Observation(sbs_data)
                     else:
-                        self.__observations[icao24].update(m)
+                        self._observations[icao24].update(sbs_data)
                     
-                    if bool(aircraft_pinned) & (aircraft_pinned not in self.__observations):
+                    if bool(aircraft_pinned) & (aircraft_pinned not in self._observations):
                         aircraft_pinned = None
 
                     # if the pinned_aircraft variable is set and that the plane is the pinned aircraft    
                     if (bool(aircraft_pinned)) & (icao24 == aircraft_pinned):
-                        if aircraft_pinned != self.__tracking_icao24:
-                            self.__tracking_icao24 = icao24
-                            self.__updateTrackingDistance()
-                            logging.info("{}\t[PINNED AIRCRAFT TRACKING]\tDist: {}\tElev: {}\t\t".format(self.__tracking_icao24, self.__tracking_distance, self.__observations[icao24].getElevation()))
+                        if aircraft_pinned != self._tracking_icao24:
+                            self._tracking_icao24 = icao24
+                            self._updateTrackingDistance()
+                            logging.info("{}\t[PINNED AIRCRAFT TRACKING]\tDist: {}\tElev: {}\t\t".format(self._tracking_icao24, self._tracking_distance, self._observations[icao24].getElevation()))
                         else:
-                            self.__updateTrackingDistance()
+                            self._updateTrackingDistance()
                     
                     # if the plane is suitable to be tracked        
-                    elif (not bool(aircraft_pinned)) & self.__isTrackable(self.__observations[icao24]):
+                    elif (not bool(aircraft_pinned)) & self._isTrackable(self._observations[icao24]):
 
                         # if no plane is being tracked, track this one
-                        if not self.__tracking_icao24:
-                            self.__tracking_icao24 = icao24
-                            self.__updateTrackingDistance()
-                            logging.info("{}\t[TRACKING]\tDist: {}\tElev: {}\t\t".format(self.__tracking_icao24, self.__tracking_distance, self.__observations[icao24].getElevation()))
+                        if not self._tracking_icao24:
+                            self._tracking_icao24 = icao24
+                            self._updateTrackingDistance()
+                            logging.info("{}\t[TRACKING]\tDist: {}\tElev: {}\t\t".format(self._tracking_icao24, self._tracking_distance, self._observations[icao24].getElevation()))
           
                         # if this is the plane being tracked, update the tracking distance
-                        elif self.__tracking_icao24 == icao24:
-                            self.__updateTrackingDistance()
+                        elif self._tracking_icao24 == icao24:
+                            self._updateTrackingDistance()
                         
                         # This plane is trackable, but is not the one being tracked
                         else:
-                            distance = self.__observations[icao24].getDistance()
-                            if distance < self.__tracking_distance:
-                                self.__tracking_icao24 = icao24
-                                self.__tracking_distance = distance
-                                logging.info("{}\t[TRACKING]\tDist: {}\tElev: {}\t\t - Switched to closer plane".format(self.__tracking_icao24, int(self.__tracking_distance), int(self.__observations[icao24].getElevation())))
+                            distance = self._observations[icao24].getDistance()
+                            if distance < self._tracking_distance:
+                                self._tracking_icao24 = icao24
+                                self._tracking_distance = distance
+                                logging.info("{}\t[TRACKING]\tDist: {}\tElev: {}\t\t - Switched to closer plane".format(self._tracking_icao24, int(self._tracking_distance), int(self._observations[icao24].getElevation())))
                     else:
                         # If the plane is currently being tracked, but is no longer trackable:
-                        if self.__tracking_icao24 == icao24:
+                        if self._tracking_icao24 == icao24:
                             logging.info("%s\t[NOT TRACKING]\t - Observation is no longer trackable" % (icao24))
-                            logging.info(self.__whyTrackable(self.__observations[icao24]))
-                            self.__tracking_icao24 = None
-                            self.__tracking_distance = 999999999
+                            logging.info(self._whyTrackable(self._observations[icao24]))
+                            self._tracking_icao24 = None
+                            self._tracking_distance = 999999999
             
             delay = 0.01                                     
             time.sleep(delay)
 
-    def selectNearestObservation(self):
+    def _selectNearestObservation(self):
         """Select nearest presentable aircraft
         """
-        self.__tracking_icao24 = None
-        self.__tracking_distance = 999999999
-        for icao24 in self.__observations:
-            if not self.__isTrackable(self.__observations[icao24]):
+        self._tracking_icao24 = None
+        self._tracking_distance = 999999999
+        for icao24 in self._observations:
+            if not self._isTrackable(self._observations[icao24]):
                 continue
-            distance = self.__observations[icao24].getDistance()
-            if self.__observations[icao24].getDistance() < self.__tracking_distance:
-                self.__tracking_icao24 = icao24
-                self.__tracking_distance = distance
-        if self.__tracking_icao24:
-            logging.info("{}\t[TRACKING]\tDist: {}\t\t - Selected Nearest Observation".format(self.__tracking_icao24, self.__tracking_distance))
+            distance = self._observations[icao24].getDistance()
+            if self._observations[icao24].getDistance() < self._tracking_distance:
+                self._tracking_icao24 = icao24
+                self._tracking_distance = distance
+        if self._tracking_icao24:
+            logging.info("{}\t[TRACKING]\tDist: {}\t\t - Selected Nearest Observation".format(self._tracking_icao24, self._tracking_distance))
             
 
-    def cleanObservations(self):
+    def _cleanObservations(self):
         global aircraft_pinned
         """Clean observations for planes not seen in a while
         """
         now = datetime.utcnow()
-        if now > self.__next_clean:
+        if now > self._next_clean:
             cleaned = []
-            for icao24 in self.__observations:
+            for icao24 in self._observations:
 #                logging.info("[%s] %s -> %s : %s" % (icao24, self.__observations[icao24].getLoggedDate(), self.__observations[icao24].getLoggedDate() + timedelta(seconds=OBSERVATION_CLEAN_INTERVAL), now))
-                if self.__observations[icao24].getLoggedDate() + timedelta(seconds=OBSERVATION_CLEAN_INTERVAL) < now:
+                if self._observations[icao24].getLoggedDate() + timedelta(seconds=OBSERVATION_CLEAN_INTERVAL) < now:
                     logging.info("%s\t[REMOVED]\t" % (icao24))
                     if icao24 == aircraft_pinned:
                         aircraft_pinned = None
                         logging.info("%s\t[REMOVED PINNED AIRCRAFT - REVERTING TO NORMAL TRACKING]\t" % (icao24))
-                    if icao24 == self.__tracking_icao24:
-                        self.__tracking_icao24 = None
-                        self.__tracking_distance = 999999999
+                    if icao24 == self._tracking_icao24:
+                        self._tracking_icao24 = None
+                        self._tracking_distance = 999999999
                     cleaned.append(icao24)
-                if icao24 == self.__tracking_icao24 and not self.__isTrackable(self.__observations[icao24]) and not aircraft_pinned:
+                if icao24 == self._tracking_icao24 and not self._isTrackable(self._observations[icao24]) and not aircraft_pinned:
                     logging.info("%s\t[NOT TRACKING]\t - Observation is no longer trackable" % (icao24))
-                    logging.info(self.__whyTrackable(self.__observations[icao24]))
-                    self.__tracking_icao24 = None
-                    self.__tracking_distance = 999999999
+                    logging.info(self._whyTrackable(self._observations[icao24]))
+                    self._tracking_icao24 = None
+                    self._tracking_distance = 999999999
             for icao24 in cleaned:
-                del self.__observations[icao24]
-            if self.__tracking_icao24 is None:
-                self.selectNearestObservation()
+                del self._observations[icao24]
+            if self._tracking_icao24 is None:
+                self._selectNearestObservation()
 
-            self.__next_clean = now + timedelta(seconds=OBSERVATION_CLEAN_INTERVAL)
+            self._next_clean = now + timedelta(seconds=OBSERVATION_CLEAN_INTERVAL)
 
 
 def getConfig():
@@ -846,7 +848,6 @@ def main():
     parser.add_argument('-M', '--min-elevation', type=int, help="minimum elevation for camera", default=0)
     parser.add_argument('-m', '--mqtt-host', help="MQTT broker hostname", default='127.0.0.1')
     parser.add_argument('-p', '--mqtt-port', type=int, help="MQTT broker port number (default 1883)", default=1883)
-    parser.add_argument('-P', '--plane-topic', dest='plane_topic', help="MQTT plane topic", default="skyscan/planes/json")
     parser.add_argument('-T', '--flight-topic', dest='flight_topic', help="MQTT flight tracking topic", default="skyscan/flight/json")
     parser.add_argument('-v', '--verbose',  action="store_true", help="Verbose output")
     parser.add_argument('-H', '--dump1090-host', help="dump1090 hostname", default='127.0.0.1')
@@ -884,9 +885,10 @@ def main():
     planes = pd.read_csv("/data/aircraftDatabase.csv") #,index_col='icao24')
     logging.info("Printing table")
     logging.info(planes)
-    threading.Thread(target=app.run, kwargs={"host": '0.0.0.0', "port": 5000}).start()
-    tracker = FlightTracker(args.dump1090_host, args.mqtt_host, args.plane_topic, args.flight_topic,dump1090_port = args.dump1090_port,  mqtt_port = args.mqtt_port)
 
+    threading.Thread(target=app.run, kwargs={"host": '0.0.0.0', "port": 5000}).start()
+
+    tracker = FlightTracker(args.dump1090_host, args.mqtt_host, args.flight_topic, dump1090_port = args.dump1090_port, mqtt_ip=args.mqtt_host,  mqtt_port = args.mqtt_port)
 
     tracker.run()  # Never returns
 

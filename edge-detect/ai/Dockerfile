@@ -4,7 +4,7 @@ LABEL org.label-schema.vendor IQT Labs
 LABEL org.label-schema.name SkyScan Edge AI
 
 # Dependencies
-RUN apt-get update && apt-get upgrade --assume-yes && apt-get install -y zip htop screen libgl1-mesa-glx
+RUN apt-get update && apt-get upgrade --assume-yes && apt-get install -y zip htop screen libgl1-mesa-glx libopenblas-base
 RUN python --version
 
 # YOLOv7

@@ -4,6 +4,7 @@ import os
 import shutil
 from pathlib import Path
 import json
+import logging
 
 import cv2
 import torch
@@ -138,7 +139,7 @@ def dirsort(save_img=False):
                         plot_one_box(xyxy, im0, label=label, color=colors[int(cls)], line_thickness=1)
 
             # Print time (inference + NMS)
-            print(f'{s}Done. ({(1E3 * (t2 - t1)):.1f}ms) Inference, ({(1E3 * (t3 - t2)):.1f}ms) NMS')
+            logging.info(f'{s}Done. ({(1E3 * (t2 - t1)):.1f}ms) Inference, ({(1E3 * (t3 - t2)):.1f}ms) NMS')
 
             # Stream results
             if view_img:
@@ -150,8 +151,8 @@ def dirsort(save_img=False):
                 if dataset.mode == 'image':
                     write_flag = cv2.imwrite(save_path, im0)
                     if not write_flag:
-                        print('! Image write error')
-                    print(f" The image with the result is saved in: {save_path}")
+                        logging.error('! Image write error')
+                    logging.info(f" The image with the result is saved in: {save_path}")
                 else:  # 'video' or 'stream'
                     if vid_path != save_path:  # new video
                         vid_path = save_path
@@ -169,11 +170,11 @@ def dirsort(save_img=False):
 
         # Move image file to destination folder based on model output
         if pred[0].shape[0] > 0:
-            print('plane')
+            logging.info('Detected plane')
             shutil.move(path, os.path.join(plane_dir, os.path.basename(path)))
         else:
             shutil.move(path, os.path.join(noplane_dir, os.path.basename(path)))
-            print('noplane')
+            logging.info('Detected noplane')
 
         if save_json:
             struct = []
@@ -191,9 +192,9 @@ def dirsort(save_img=False):
 
     if save_txt or save_img:
         s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ''
-        #print(f"Results saved to {save_dir}{s}")
+        logging.info(f"Results saved to {save_dir}{s}")
 
-    print(f'Done. ({time.time() - t0:.3f}s)')
+    logging.info(f'Done. ({time.time() - t0:.3f}s)')
 
 
 if __name__ == '__main__':
@@ -232,8 +233,11 @@ if __name__ == '__main__':
     #parser.add_argument('--name', default='exp', help='save results to project/name')
     #parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     parser.add_argument('--no-trace', action='store_true', help='don`t trace model')
+    
+    logging.basicConfig(level=logging.debug)
+
     opt = parser.parse_args()
-    print(opt)
+    logging.info(opt)
     #check_requirements(exclude=('pycocotools', 'thop'))
 
     with torch.no_grad():

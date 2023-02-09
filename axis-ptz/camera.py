@@ -668,7 +668,6 @@ def on_message_impl(client, userdata, message):
         logging.exception("Error decoding message as JSON: %s", e)
     except Exception as e:
         logging.exception("Error decoding message as JSON: %s", e)
-        print("Caught it!")
 
     if message.topic == object_topic:
         logging.info("Got Object Topic")
@@ -861,7 +860,7 @@ def main():
     time.sleep(delay)
     flight_topic = args.mqtt_flight_topic
     object_topic = args.mqtt_object_topic
-    print(
+    logging.info(
         "connecting to MQTT broker at "
         + args.mqtt_host
         + ", channel '"
@@ -913,5 +912,4 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        print(e)
         logging.critical(e, exc_info=True)

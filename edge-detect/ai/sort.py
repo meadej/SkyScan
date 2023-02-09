@@ -234,7 +234,7 @@ if __name__ == '__main__':
     #parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     parser.add_argument('--no-trace', action='store_true', help='don`t trace model')
     
-    logging.basicConfig(level=logging.debug)
+    logging.basicConfig(level=logging.DEBUG)
 
     opt = parser.parse_args()
     logging.info(opt)

@@ -440,15 +440,9 @@ class FlightTracker(BaseMQTTPubSub):
         """
         MQTT publish closest observation every second, more often if the plane is closer
         """
-        timeHeartbeat = 0
         notTrackingJson = "{}"
 
         while True:
-
-            # Checks to see if it is time to publish a hearbeat message
-            if timeHeartbeat < time.mktime(time.gmtime()):
-                timeHeartbeat = time.mktime(time.gmtime()) + 10
-                self._client.publish("skyscan/heartbeat", "skyscan-tracker-" +ID+" Heartbeat", 0, False)
 
             # if we are not tracking anything, goto sleep for 1 second
             if not self._tracking_icao24:

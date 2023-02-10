@@ -36,7 +36,8 @@ jobs:
         echo ${{ steps.files.output.all }}
     - name: Build Images
       env: 
-        # Every folder in the repo that has a Dockerfile within it, comma separated 
+        # Every folder in the repo that has a Dockerfile within it, comma separated
+        # Ensure there are no spaces after the comma
         DOCKERFOLDERS: "edge-detect/ai,tracker,piaware,pan-tilt-pi,notebook-server,mqtt,egi,axis-ptz"
         PROJECT_NAME: "skyscan"
         REPO_NAME: "meadejs"
